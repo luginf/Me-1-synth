@@ -7,6 +7,7 @@
 #include "M1RomLoader.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -42,7 +43,7 @@ struct Dir {
     std::map<std::string, fs::path> byLower;     // lower-case file name -> path
     explicit Dir(const std::string& d) {
         std::error_code ec;
-        for (fs::directory_iterator it(d, ec), end; !ec && it != end; it.increment(ec))
+        for (fs::directory_iterator it(fs::u8path(d), ec), end; !ec && it != end; it.increment(ec))
             if (it->is_regular_file(ec)) byLower[lower(it->path().filename().string())] = it->path();
     }
     const fs::path* find(const std::string& name) const {
@@ -124,7 +125,7 @@ std::vector<int16_t> s16s(const Bytes& img, Tab t) {
 // ------------------------------------------------------------------- ROM set
 struct RomSet {
     Bytes pcmBytes, coef, os;
-    std::string preloadPath;
+    fs::path preloadPath;
 
     explicit RomSet(const std::string& dir) {
         Dir d(dir);
@@ -135,7 +136,7 @@ struct RomSet {
             if (kv.first.size() < 4 || kv.first.substr(kv.first.size() - 4) != ".syx") continue;
             const Bytes b = readFile(kv.second);
             if (b.size() > 8 && b[0] == 0xF0 && b[1] == 0x42 && (b[2] & 0xF0) == 0x30 && b[3] == 0x19 && b[4] == 0x50) {
-                preloadPath = kv.second.string();
+                preloadPath = kv.second;
                 break;
             }
         }
@@ -546,7 +547,7 @@ std::shared_ptr<const RomData> loadRomSet(const std::string& dir, std::string& e
             const int64_t off = dwgs ? (int64_t)(i - kDwgsFirst) * kDwgsStride : 0;
             m1::Multisound ms{};
             ms.first = (uint16_t)out->splits.size(); ms.count = (uint8_t)nsplit; ms.dwgs = dwgs ? 1 : 0;
-            std::snprintf(ms.name, sizeof ms.name, "%s", cname(name).c_str());
+            std::strncpy(ms.name, cname(name).c_str(), sizeof ms.name - 1);
             out->msNames.push_back(dname(name));
             for (int k = 0; k < nsplit; ++k) {
                 const uint8_t* s = m.ds((uint32_t)(ptr + kSplitRec * k), 9);

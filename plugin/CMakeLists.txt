@@ -4,9 +4,16 @@ project(Me-1 VERSION 0.1.0)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# JUCE: an existing checkout, not vendored here. Override with -DJUCE_DIR=...
+# JUCE: an existing checkout when JUCE_DIR points at one (local builds), otherwise
+# fetched at the version the CI uses. Not vendored here.
 set(JUCE_DIR "/home/alan/src/juce-checkouts/JUCE-8.0.13" CACHE PATH "JUCE source tree")
-add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/juce" EXCLUDE_FROM_ALL)
+if(EXISTS "${JUCE_DIR}/CMakeLists.txt")
+    add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/juce" EXCLUDE_FROM_ALL)
+else()
+    include(FetchContent)
+    FetchContent_Declare(JUCE GIT_REPOSITORY https://github.com/juce-framework/JUCE.git GIT_TAG 8.0.15 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(JUCE)
+endif()
 
 # ---- ROMs -------------------------------------------------------------------
 # No ROM data is converted, embedded or copied at build time: the plugin reads
