@@ -57,7 +57,7 @@ public:
 
 private:
     // Editor on top, a bar with the Options button below it.
-    class Content final : public Component {
+    class Content final : public Component, private ComponentListener {
     public:
         static constexpr int kBarHeight = 34;
 
@@ -65,13 +65,20 @@ private:
             auto* proc = owner.pluginHolder->processor.get();
             editor.reset(proc->hasEditor() ? proc->createEditorAndMakeActive() : new GenericAudioProcessorEditor(*proc));
             addAndMakeVisible(editor.get());
+            editor->addComponentListener(this);
             optionsButton.setTriggeredOnMouseDown(true);
             optionsButton.onClick = [this] { showMenu(); };
             addAndMakeVisible(optionsButton);
             setSize(editor->getWidth(), editor->getHeight() + kBarHeight);
         }
 
+        void componentMovedOrResized(Component& c, bool, bool wasResized) override {
+            if (wasResized && &c == editor.get() && getHeight() != c.getHeight() + kBarHeight)
+                setSize(c.getWidth(), c.getHeight() + kBarHeight);
+        }
+
         ~Content() override {
+            editor->removeComponentListener(this);
             owner.pluginHolder->processor->editorBeingDeleted(editor.get());
             editor = nullptr;
         }

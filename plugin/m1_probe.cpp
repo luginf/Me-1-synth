@@ -114,6 +114,7 @@ int main(int argc, char** argv) {
             juce::AudioBuffer<float> buf(2, kBlock); juce::MidiBuffer mb;
             a.processBlock(buf, mb);            // applies the selection
             a.setVolumePercent(55);
+            a.editorFolded = true;
             a.getStateInformation(st);
             for (int b = 0; b < kBlocks; ++b) renderBlock(a, b, ref);
         }
@@ -127,7 +128,7 @@ int main(int argc, char** argv) {
             c.processBlock(buf, mb);
         }
         for (int b = 0; b < kBlocks; ++b) renderBlock(c, b, o);
-        const bool okState = c.isCombiMode() && c.currentIndex() == 7 && c.getVolumePercent() == 55;
+        const bool okState = c.isCombiMode() && c.currentIndex() == 7 && c.getVolumePercent() == 55 && c.editorFolded;
         const bool same = o == ref;
         std::printf("state round trip: mode/index/volume %s, render %s\n", okState ? "restored" : "WRONG", same ? "identical" : "DIFFERENT");
         if (!okState || !same) ++fails;

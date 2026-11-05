@@ -53,6 +53,9 @@ private:
 
     M1AudioProcessor& proc;
     juce::TextButton progButton{"PROG"}, combiButton{"COMBI"}, importButton{"Import SysEx..."};
+    juce::TextButton foldButton{"Hide editor"};
+    void applyFold();
+    int foldedHeight() const;
     juce::TextButton editTab{"Edit"}, globalTab{"Global"}, kitTab{"Drum Kits"};
     juce::ComboBox selector, destBox;
     juce::TextButton writeButton{"Write"}, revertButton{"Revert"}, compareButton{"Compare"}, protectButton{"Protect"};

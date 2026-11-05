@@ -166,6 +166,9 @@ private:
     bool ready = false;
     juce::String status;
     std::atomic<bool> combiMode{false};
+public:
+    bool editorFolded = false;     // editor section hidden (compact synth), per instance, saved in the state
+private:
     std::atomic<int> index{0};
     std::atomic<int> volumePercent{80};
     std::atomic<int> activeVoicesShown{0};

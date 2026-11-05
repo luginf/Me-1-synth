@@ -123,7 +123,7 @@ const uint8_t kFont5x7[95][5] = {
 // font and thresholded to 1 bit.
 class M1Editor::LcdView : public juce::Component {
 public:
-    static constexpr int kCols = 40, kRows = 8, kCw = 6, kCh = 8, kScale = 2;
+    static constexpr int kCols = 40, kRows = 8, kCw = 6, kCh = 8, kScale = 2, kPad = 6;  // kPad: LCD margin inside the glass
     struct Line { juce::String text; int invFrom = 0, invLen = 0; };
 
     LcdView() { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
@@ -146,8 +146,8 @@ public:
         g.setColour(juce::Colour(0xff2a3a32));
         g.drawRect(getLocalBounds(), 2);
     }
-    static int width() { return kCols * kCw * kScale + 16; }
-    static int height() { return kRows * kCh * kScale + 16; }
+    static int width() { return kCols * kCw * kScale + 16 + 2 * kPad; }
+    static int height() { return kRows * kCh * kScale + 16 + 2 * kPad; }
 
 private:
     const std::array<bool, kCw * kCh>& glyph(juce::juce_wchar c) {
@@ -161,7 +161,7 @@ private:
     }
 
     void rebuild() {
-        image = juce::Image(juce::Image::ARGB, kCols * kCw * kScale, kRows * kCh * kScale, true);
+        image = juce::Image(juce::Image::ARGB, kCols * kCw * kScale + 2 * kPad, kRows * kCh * kScale + 2 * kPad, true);
         juce::Graphics g(image);
         const auto bg = juce::Colour(0xff9db894), on = juce::Colour(0xff10281c);
         g.fillAll(bg);
@@ -176,7 +176,7 @@ private:
                         const bool lit = bits[(size_t)(y * kCw + x)] != inv;
                         if (!lit) continue;
                         g.setColour(on);
-                        g.fillRect((c * kCw + x) * kScale, (r * kCh + y) * kScale, kScale, kScale);
+                        g.fillRect(kPad + (c * kCw + x) * kScale, kPad + (r * kCh + y) * kScale, kScale, kScale);
                     }
             }
         }
@@ -481,7 +481,9 @@ private:
 
 //==============================================================================
 M1Editor::M1Editor(M1AudioProcessor& p) : juce::AudioProcessorEditor(&p), proc(p), keyboard(p) {
-    setSize(900, 876);
+    setSize(900, 888);
+    addAndMakeVisible(foldButton);
+    foldButton.onClick = [this] { proc.editorFolded = !proc.editorFolded; applyFold(); };
     for (auto* b : {&progButton, &combiButton, &importButton, &editTab, &globalTab, &kitTab, &writeButton, &revertButton})
         addAndMakeVisible(*b);
     for (auto* b : {&editTab, &globalTab, &kitTab}) b->setClickingTogglesState(false);
@@ -555,7 +557,26 @@ M1Editor::M1Editor(M1AudioProcessor& p) : juce::AudioProcessorEditor(&p), proc(p
 
     addAndMakeVisible(keyboard);
     fillList();
+    applyFold();
     startTimerHz(15);
+}
+
+int M1Editor::foldedHeight() const {
+    // 12 margin + 32 title + 28 + 8 + 24 + 8 (top strips) + LCD + 8 + keyboard + 12 margin
+    return 12 + 32 + 28 + 8 + 24 + 8 + LcdView::height() + 8 + (int)D110Keyboard::kRefH + 12;
+}
+
+void M1Editor::applyFold() {
+    const bool f = proc.editorFolded;
+    foldButton.setButtonText(f ? "Show editor" : "Hide editor");
+    for (juce::Component* c : std::initializer_list<juce::Component*>{&editTab, &globalTab, &kitTab, &pageList, &viewport,
+             &destBox, &writeLabel, &writeButton, &revertButton, &compareButton, &protectButton, &editedLabel})
+        c->setVisible(!f);
+    kitSlider.setVisible(!f && tab == 2);
+    instSlider.setVisible(!f && tab == 2);
+    if (graphView && f) graphView->setVisible(false);
+    setSize(900, f ? foldedHeight() : 888);
+    resized();
 }
 
 M1Editor::~M1Editor() {
@@ -780,8 +801,8 @@ void M1Editor::timerCallback() {
     globalTab.setToggleState(tab == 1, juce::dontSendNotification);
     kitTab.setToggleState(tab == 2, juce::dontSendNotification);
     for (auto* b : {&editTab, &globalTab, &kitTab}) b->setClickingTogglesState(false);
-    kitSlider.setVisible(tab == 2);
-    instSlider.setVisible(tab == 2);
+    kitSlider.setVisible(!proc.editorFolded && tab == 2);
+    instSlider.setVisible(!proc.editorFolded && tab == 2);
     voicesLabel.setText("Voices: " + juce::String(proc.activeVoices()), juce::dontSendNotification);
     compareButton.setToggleState(proc.isComparing(), juce::dontSendNotification);
     protectButton.setToggleState(proc.isProtected(), juce::dontSendNotification);
@@ -842,7 +863,9 @@ void M1Editor::resized() {
 
     auto lcdRow = r.removeFromTop(LcdView::height());
     if (lcd) lcd->setBounds(lcdRow.withSizeKeepingCentre(LcdView::width(), LcdView::height()));
+    foldButton.setBounds(lcdRow.removeFromRight(110).removeFromBottom(26));
     r.removeFromTop(8);
+    if (proc.editorFolded) return;
 
     auto tabs = r.removeFromTop(26);
     editTab.setBounds(tabs.removeFromLeft(90));

@@ -532,6 +532,7 @@ void M1AudioProcessor::getStateInformation(juce::MemoryBlock& dest) {
     out.writeInt(protectFlag.load() ? 1 : 0);
     out.writeInt(kbChannel); out.writeInt(kbPcInput ? 1 : 0); out.writeInt(kbPcLayout);
     out.writeInt(kbOctaves); out.writeInt(kbVelocity); out.writeInt(kbRemap ? 1 : 0);
+    out.writeInt(editorFolded ? 1 : 0);
 }
 
 void M1AudioProcessor::setStateInformation(const void* data, int size) {
@@ -560,6 +561,7 @@ void M1AudioProcessor::setStateInformation(const void* data, int size) {
     if (in.getNumBytesRemaining() >= 24) {   // keyboard settings (added after the protect flag)
         kbChannel = juce::jlimit(1, 16, in.readInt()); kbPcInput = in.readInt() != 0; kbPcLayout = in.readInt() != 0 ? 1 : 0;
         kbOctaves = juce::jlimit(0, 4, in.readInt()); kbVelocity = juce::jlimit(1, 127, in.readInt()); kbRemap = in.readInt() != 0;
+        if (in.getNumBytesRemaining() >= 4) editorFolded = in.readInt() != 0;   // editor section folded
     }
 }
 
