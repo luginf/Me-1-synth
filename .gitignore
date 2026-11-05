@@ -1,0 +1,7 @@
+roms/*
+!roms/README.md
+__pycache__/
+build/
+host_tests/m1_render
+*.wav
+plugin/build/
