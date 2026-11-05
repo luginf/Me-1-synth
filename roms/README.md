@@ -12,5 +12,6 @@ Put here (same set as upstream, see `UPSTREAM_README.md`, "Building the firmware
   Plus+1 OS is refused.
 - `*.syx` - an M1 ALL DATA dump, normally the factory preload `M1preld.syx`
 
-`tools/m1_make_blob.py <roms dir> <out dir>` converts them into the PCM blob and
-the `m1_rom_tables.h` header that `m1_engine/src/M1_Bridge.cpp` includes.
+The plugin reads this folder at runtime (`plugin/Source/M1RomLoader.cpp`); nothing is
+converted or embedded. `tools/m1_make_blob.py <roms dir> <out dir>` is the Python reference
+(used by `host_tests/` and for `rom_compare`), its output stays outside the repository.

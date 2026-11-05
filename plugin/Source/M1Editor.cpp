@@ -483,6 +483,15 @@ private:
 M1Editor::M1Editor(M1AudioProcessor& p) : juce::AudioProcessorEditor(&p), proc(p), keyboard(p) {
     setSize(900, 888);
     addAndMakeVisible(foldButton);
+    addChildComponent(locateButton);
+    locateButton.onClick = [this] {
+        chooser = std::make_unique<juce::FileChooser>("Choose the folder holding the M1 ROM set", juce::File(), "");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                             [this](const juce::FileChooser& fc) {
+                                 const auto d = fc.getResult();
+                                 if (d != juce::File()) statusLabel.setText(proc.locateRoms(d), juce::dontSendNotification);
+                             });
+    };
     foldButton.onClick = [this] { proc.editorFolded = !proc.editorFolded; applyFold(); };
     for (auto* b : {&progButton, &combiButton, &importButton, &editTab, &globalTab, &kitTab, &writeButton, &revertButton})
         addAndMakeVisible(*b);
@@ -811,6 +820,8 @@ void M1Editor::timerCallback() {
     writeButton.setEnabled(!proc.isProtected());
     compareButton.setEnabled(tab == 0);
     editedLabel.setText(proc.isEdited() && tab == 0 ? "edited" : "", juce::dontSendNotification);
+    locateButton.setVisible(!proc.isReady());
+    statusLabel.setTooltip(proc.statusMessage());
     if (!proc.isReady()) statusLabel.setText(proc.statusMessage(), juce::dontSendNotification);
     if (!proc.isReady()) return;
 
@@ -863,6 +874,7 @@ void M1Editor::resized() {
 
     auto lcdRow = r.removeFromTop(LcdView::height());
     if (lcd) lcd->setBounds(lcdRow.withSizeKeepingCentre(LcdView::width(), LcdView::height()));
+    locateButton.setBounds(lcdRow.removeFromLeft(130).removeFromBottom(26));
     foldButton.setBounds(lcdRow.removeFromRight(110).removeFromBottom(26));
     r.removeFromTop(8);
     if (proc.editorFolded) return;

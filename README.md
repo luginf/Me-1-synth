@@ -51,7 +51,7 @@ JUCE is not vendored: `plugin/CMakeLists.txt` points at
 `/home/alan/src/juce-checkouts/JUCE-8.0.13` (override with `-DJUCE_DIR=`).
 
 ```bash
-cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release   # converts roms/ at configure time
+cmake -S plugin -B build -DCMAKE_BUILD_TYPE=Release -DM1_DEV_ROM_DIR=$PWD/roms   # path only, nothing is copied
 cmake --build build --target Me-1_Standalone Me-1_VST3 M1Probe -j4
 build/M1Probe_artefacts/Release/M1Probe roms/M1preld.syx
 ```
@@ -62,10 +62,15 @@ build/M1Probe_artefacts/Release/M1Probe roms/M1preld.syx
   output is resampled to the host rate. MIDI mapping is the firmware's
   (`M1_Midi`): omni, CC1/CC2/CC7/CC64/CC65, program change, aftertouch, bend.
   Program Change keeps the current Program/Combi mode.
-- The 4 MB PCM is read at runtime from `m1_pcm.bin` (beside the binary, in
-  `m1-roms/`, in `~/.config/Me-1/`, or the build tree for dev builds). The
-  Standalone and VST3 builds copy it to `m1-roms/` beside the executable (for the
-  VST3, inside the bundle, `Contents/x86_64-linux/`); nothing is copied to `~/.vst3`.
+- The ROMs are read at runtime from the user's own files by `plugin/Source/M1RomLoader.*`
+  (a C++ port of `tools/m1_rom.py`, `m1_fx_tables.py` and `m1_make_blob.py`): PCM, kernel,
+  VDF, EG/MG tables, effect coefficients, factory programs and combinations are built in
+  memory once per process and shared read-only by all instances. Search order: the
+  folder chosen with the editor's "Locate ROMs..." button (remembered in
+  `~/.config/Me-1/rom_folder.txt`), `m1-roms/` beside the binary, the binary's folder,
+  `~/.config/Me-1/roms/`, then `-DM1_DEV_ROM_DIR` (development builds). The folder holds
+  the files listed in `roms/README.md`. `host_tests/rom_compare.cpp` checks the loader
+  against the Python generator table by table (all identical on the Rev 19 set).
 - SysEx goes through the vendored `M1_SysEx` (ALL DATA, program and combination
   dumps, mode change, device inquiry). The editor's "Import SysEx..." button
   queues a `.syx` file to the audio thread. Replies are not sent (no MIDI out).
@@ -111,13 +116,10 @@ build/M1Probe_artefacts/Release/M1Probe roms/M1preld.syx
   editor works even when no audio device opens (the Standalone here, without
   ALSA access).
 
-**Not redistributable.** Only the PCM is loaded at runtime. The other ROM-derived
-tables (interpolation kernel, VDF coefficients, EG/MG tables, factory programs,
-combinations, effect coefficients) come from the OS, IC30 and the preload and are
-compiled into the binary through `m1_rom_tables.h`. A build is for the owner of
-the ROMs only. A distributable binary needs a C++ port of `tools/m1_rom.py` that
-reads those tables from the user's ROMs at startup, as `D5RomLoader` does for the
-D-50; not started.
+**Redistributable binary.** No ROM data is compiled into the plugin or copied next to it:
+it only holds the code and a few short signature strings used to recognise the Rev 19 OS
+(`Piano`, `E.Piano 1`, `Kick 1`). The user supplies the ROM files. The ROM files themselves,
+and the Python tools' output, must never be committed or shipped.
 
 Checked 2026-11-05 on Linux: `M1Probe` (one instance at 48 kHz renders a note, two
 interleaved instances give bit-identical output to one alone, all 100 programs and
@@ -129,8 +131,7 @@ Windows/macOS builds.
 
 ## Status
 
-Host engine and plugin work as above. Next: runtime ROM loader (to ship
-without ROM-derived data), edit pages, MIDI output for dumps.
+Host engine and plugin work as above. Next: CI builds for Linux, Windows and macOS, MIDI output for dumps.
 
 ## License
 

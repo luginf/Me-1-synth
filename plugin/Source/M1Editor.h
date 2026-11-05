@@ -53,7 +53,7 @@ private:
 
     M1AudioProcessor& proc;
     juce::TextButton progButton{"PROG"}, combiButton{"COMBI"}, importButton{"Import SysEx..."};
-    juce::TextButton foldButton{"Hide editor"};
+    juce::TextButton foldButton{"Hide editor"}, locateButton{"Locate ROMs..."};
     void applyFold();
     int foldedHeight() const;
     juce::TextButton editTab{"Edit"}, globalTab{"Global"}, kitTab{"Drum Kits"};

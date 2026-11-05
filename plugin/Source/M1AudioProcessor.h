@@ -13,6 +13,7 @@
 #include "D110KeyboardHost.h"
 #include "M1_SysEx.h"
 #include "m1_params.h"
+#include "M1RomLoader.h"
 #include "m1_engine/m1_engine.h"
 #include "m1_memory.h"
 
@@ -22,13 +23,11 @@
 // the user memory and the kernel copies in file-scope globals, so two plugin
 // instances in one host would share them. Everything stateful lives here, per
 // instance (m1::Engine, fxMem, m1::Memory). Only the read-only ROM tables
-// (m1rom::k*, generated at configure time) are shared.
+// (m1rom::RomData, loaded once per process) are shared.
 //
 // The engine renders float stereo at m1::kSampleRate (31.25 kHz) and is
-// resampled to the host rate. The 4 MB PCM is read from m1_pcm.bin at runtime
-// (see loadPcm()); it is not embedded in the binary. The other ROM-derived
-// tables (kernel, VDF, factory programs...) ARE compiled in, so a build is for
-// the owner of the ROMs only and must not be redistributed.
+// resampled to the host rate. The user's own ROM files are read at runtime by
+// M1RomLoader (see loadRom()); no ROM data is compiled into the binary.
 class M1AudioProcessor : public juce::AudioProcessor, public D110KeyboardHost, private M1_SysExHost {
 public:
     M1AudioProcessor();
@@ -61,6 +60,8 @@ public:
 
     // --- for the editor (message thread) -----------------------------------
     bool isReady() const { return ready; }
+    // Loads the ROM set from a folder the user chose (when none was found automatically).
+    juce::String locateRoms(const juce::File& dir);
     juce::String statusMessage() const { return status; }
     bool isCombiMode() const { return combiMode.load(); }
     int  currentIndex() const { return index.load(); }
@@ -143,7 +144,7 @@ private:
     int  globalChannel() const override { return 16; }                // any channel
     m1::Memory& memory() override { return mem; }
 
-    bool loadPcm();
+    bool loadRom();
     void initEngine();
     void applyPending();
     void handleMidi(const juce::MidiMessage&);
@@ -156,14 +157,15 @@ private:
 
     // One engine per instance.
     std::unique_ptr<m1::Engine> engine;
-    std::vector<int16_t> pcm;
+    std::shared_ptr<const m1rom::RomData> romData;   // the ROM set, shared and read-only
     std::array<int16_t, 65536> fxMem{};
     m1::Memory mem;
     uint8_t progEdit[m1::kProgLen]{};
     uint8_t combiEditBuf[m1::kCombiLen]{};
     std::unique_ptr<M1_SysEx> sysex;
 
-    bool ready = false;
+    std::atomic<bool> ready{false};
+    std::mutex initMutex;
     juce::String status;
     std::atomic<bool> combiMode{false};
 public:

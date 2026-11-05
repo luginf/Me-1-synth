@@ -4,6 +4,7 @@
 //   3. SysEx: the factory ALL DATA dump fed back in leaves the sound unchanged
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "M1AudioProcessor.h"
@@ -51,6 +52,16 @@ static void prep(M1AudioProcessor& p) {
 }
 
 int main(int argc, char** argv) {
+    if (const char* dir = std::getenv("M1_PROBE_LOCATE")) {   // ROM folder chosen by hand (no automatic hit expected)
+        M1AudioProcessor p;
+        const bool before = p.isReady();
+        const auto msg = p.locateRoms(juce::File(dir));
+        std::printf("locate ROMs: ready before %d, after %d (%s)\n", before, p.isReady(), msg.toRawUTF8());
+        M1AudioProcessor q;   // a new instance finds the saved folder by itself
+        std::printf("locate ROMs: new instance ready %d\n", q.isReady());
+        return p.isReady() && !before && q.isReady() ? 0 : 1;
+    }
+
     juce::ScopedJuceInitialiser_GUI init;
     int fails = 0;
 

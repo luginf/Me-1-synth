@@ -4,7 +4,7 @@
 #include <complex>
 
 #include "M1Editor.h"
-#include "m1_rom_tables.h"   // generated at configure time from the user's ROMs
+#include "M1RomLoader.h"   // reads the user's ROM files at runtime (nothing is embedded)
 
 namespace {
 // The engine's output stage on the Pico (M1_Bridge) is gain * midiGain * 2.0
@@ -27,45 +27,94 @@ void m1_sysex_write(const uint8_t*, size_t) {}
 M1AudioProcessor::M1AudioProcessor()
     : juce::AudioProcessor(BusesProperties().withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
     sysex.reset(new M1_SysEx(*this));   // not make_unique: the host base is private
-    // Static factory data only: these pointers are process-wide, so they must not
-    // point into an instance (the Program names of timbres are resolved by
-    // formatParam() from the instance's own memory instead).
-    m1::setNameSources(m1rom::kMultisoundNames, m1rom::kDrumNames, m1rom::kPrograms);
     initEngine();
 }
 
 M1AudioProcessor::~M1AudioProcessor() = default;
 
-// m1_pcm.bin is the 4 MiB interleaved PCM written by tools/m1_make_blob.py.
-// Search order: beside the binary, in m1-roms/ beside it, in the per-user data
-// folder, then the build tree it was generated in (dev builds).
-bool M1AudioProcessor::loadPcm() {
-    const auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
-    const juce::Array<juce::File> candidates{
-        exeDir.getChildFile("m1_pcm.bin"),
-        exeDir.getChildFile("m1-roms").getChildFile("m1_pcm.bin"),
-        juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-            .getChildFile("Me-1").getChildFile("m1_pcm.bin"),
-#ifdef M1_PCM_DEV_PATH
-        juce::File(M1_PCM_DEV_PATH),
-#endif
-    };
-    for (const auto& f : candidates) {
-        if (!f.existsAsFile()) continue;
-        juce::MemoryBlock mb;
-        if (!f.loadFileAsData(mb)) continue;
-        if (mb.getSize() != 4u * 1024u * 1024u) {
-            status = "Wrong size for " + f.getFullPathName() + " (need 4 MiB)";
-            continue;
-        }
-        pcm.resize(mb.getSize() / 2);
-        std::memcpy(pcm.data(), mb.getData(), mb.getSize());   // little-endian host
-        status = "M1 ready (" + f.getFullPathName() + ")";
-        return true;
+// The ROM set is read from the user's own files at runtime and kept in memory,
+// shared by all instances of the process (read-only). Nothing derived from it is
+// stored in the binary or written to disk. Every ROM set ever loaded stays alive
+// until the process ends: the process-wide name tables point into it.
+namespace {
+std::mutex g_romMutex;
+std::vector<std::shared_ptr<const m1rom::RomData>> g_romKeep;
+std::shared_ptr<const m1rom::RomData> g_rom;
+
+std::shared_ptr<const m1rom::RomData> currentRom() {
+    std::lock_guard<std::mutex> lock(g_romMutex);
+    return g_rom;
+}
+
+juce::File romPathFile() {
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Me-1").getChildFile("rom_folder.txt");
+}
+
+// Loads (or reuses) the ROM set found in `dir`.
+std::shared_ptr<const m1rom::RomData> acquireRom(const juce::File& dir, std::string& err) {
+    {
+        std::lock_guard<std::mutex> lock(g_romMutex);
+        for (auto& r : g_romKeep)
+            if (r->folder == dir.getFullPathName().toStdString()) return r;
     }
-    if (status.isEmpty())
-        status = "m1_pcm.bin not found next to the app, in m1-roms/ or in the user data folder";
+    auto rom = m1rom::loadRomSet(dir.getFullPathName().toStdString(), err);
+    if (!rom) return nullptr;
+    std::lock_guard<std::mutex> lock(g_romMutex);
+    g_romKeep.push_back(rom);
+    return rom;
+}
+}  // namespace
+
+// Search order: the folder chosen with "Locate ROMs...", m1-roms/ beside the
+// binary, the binary's own folder, the per-user data folder (Me-1/roms), then the
+// folder a development build was configured with.
+bool M1AudioProcessor::loadRom() {
+    const auto exeDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
+    juce::Array<juce::File> candidates;
+    const auto saved = romPathFile().loadFileAsString().trim();
+    if (saved.isNotEmpty()) candidates.add(juce::File(saved));
+    candidates.add(exeDir.getChildFile("m1-roms"));
+    candidates.add(exeDir);
+    candidates.add(juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Me-1").getChildFile("roms"));
+#ifdef M1_DEV_ROM_DIR
+    candidates.add(juce::File(M1_DEV_ROM_DIR));
+#endif
+    juce::String firstError;
+    for (const auto& dir : candidates) {
+        if (!dir.isDirectory()) continue;
+        std::string err;
+        auto rom = acquireRom(dir, err);
+        if (rom) {
+            {
+                std::lock_guard<std::mutex> lock(g_romMutex);
+                g_rom = rom;
+            }
+            romData = rom;
+            // Process-wide name sources point into the (immutable, never freed) ROM data;
+            // the Program names of timbres come from each instance's own memory instead.
+            m1::setNameSources(rom->msNamePtrs.data(), rom->drumNamePtrs.data(), rom->programs.data());
+            status = "M1 ready (" + dir.getFullPathName() + ")";
+            return true;
+        }
+        if (firstError.isEmpty() && dir.getChildFile("IC30.bin").existsAsFile()) firstError = dir.getFullPathName() + ": " + err;
+    }
+    status = firstError.isNotEmpty() ? firstError
+                                     : juce::String("ROM files not found. Use \"Locate ROMs...\" to choose the folder with the M1 ROM set (see README).");
     return false;
+}
+
+juce::String M1AudioProcessor::locateRoms(const juce::File& dir) {
+    if (ready) return "ROMs already loaded; restart the plugin to change the folder";
+    std::string err;
+    auto rom = acquireRom(dir, err);
+    if (!rom) {
+        status = "ROM folder " + dir.getFullPathName() + ": " + err;
+        return status;
+    }
+    romPathFile().create();
+    romPathFile().replaceWithText(dir.getFullPathName());
+    initEngine();
+    return status;
 }
 
 void M1AudioProcessor::prepareToPlay(double sampleRate, int) {
@@ -82,44 +131,46 @@ void M1AudioProcessor::prepareToPlay(double sampleRate, int) {
 // constructor: the editor must have something to show even when the host (or
 // the Standalone, without an audio device) never calls prepareToPlay.
 void M1AudioProcessor::initEngine() {
+    std::lock_guard<std::mutex> initLock(initMutex);   // the audio thread and a ROM-folder choice may both get here
     if (ready) return;
-    if (!loadPcm()) return;
+    if (!loadRom()) return;
+    const m1rom::RomData& R = *romData;
 
-    mem.init(m1rom::kGlobal, m1rom::kKits, m1rom::kCombis, m1rom::kPrograms);
+    mem.init(R.global.data(), R.kits.data(), R.combis.data(), R.programs.data());
     if (stateMemory.size() == sizeof(m1::MemoryImage))
         std::memcpy(&mem.image(), stateMemory.data(), stateMemory.size());
     stateMemoryPending = false;
     m1::MemoryImage& img = mem.image();
     m1::RomTables rom{};
-    rom.pcm = pcm.data();
-    rom.pcmWords = (uint32_t)pcm.size();
-    rom.ms = m1rom::kMultisounds;
-    rom.splits = m1rom::kSplits;
-    rom.drums = m1rom::kDrums;
-    rom.nDrums = m1rom::kDrumCount;
-    rom.kernel = m1rom::kKernel;
-    rom.vdf1k = m1rom::kVdf1k;
-    rom.vdf2k = m1rom::kVdf2k;
-    rom.vdf1t0 = m1rom::kVdf1t0;
-    rom.vdf2t0 = m1rom::kVdf2t0;
-    rom.egRise = m1rom::kEgRise;
-    rom.egFall = m1rom::kEgFall;
-    rom.velCurve = m1rom::kVelCurve;
-    rom.mgFreq = m1rom::kMgFreq;
-    rom.mgDelay = m1rom::kMgDelay;
-    rom.mgIntP = m1rom::kMgIntP;
-    rom.mgIntF = m1rom::kMgIntF;
-    rom.pitchS = m1rom::kPitchS;
-    rom.pitchF = m1rom::kPitchF;
-    rom.panReg = m1rom::kPanReg;
-    rom.pan101 = m1rom::kPan101;
-    rom.delayStart = m1rom::kDelayStart;
-    rom.fx = &m1rom::kFx;
+    rom.pcm = R.pcm.data();
+    rom.pcmWords = (uint32_t)R.pcm.size();
+    rom.ms = R.ms.data();
+    rom.splits = R.splits.data();
+    rom.drums = R.drums.data();
+    rom.nDrums = R.nDrums;
+    rom.kernel = R.kernel.data();
+    rom.vdf1k = R.vdf1k.data();
+    rom.vdf2k = R.vdf2k.data();
+    rom.vdf1t0 = R.vdf1t0.data();
+    rom.vdf2t0 = R.vdf2t0.data();
+    rom.egRise = R.egRise.data();
+    rom.egFall = R.egFall.data();
+    rom.velCurve = R.velCurve.data();
+    rom.mgFreq = R.mgFreq.data();
+    rom.mgDelay = R.mgDelay.data();
+    rom.mgIntP = R.mgIntP.data();
+    rom.mgIntF = R.mgIntF.data();
+    rom.pitchS = R.pitchS.data();
+    rom.pitchF = R.pitchF.data();
+    rom.panReg = R.panReg.data();
+    rom.pan101 = R.pan101.data();
+    rom.delayStart = R.delayStart.data();
+    rom.fx = R.fx.get();
     rom.programs = img.programs;
     rom.combis = img.combis;
     rom.kits = img.kits;
     rom.global = img.global;
-    rom.scale = m1rom::kScale;
+    rom.scale = R.scale.data();
     engine = std::make_unique<m1::Engine>();
     if (!engine->init(rom, fxMem.data())) {
         status = "Engine init failed";
@@ -270,18 +321,22 @@ void M1AudioProcessor::applyEdit(const EditCmd& c) {
 double M1AudioProcessor::egSegmentSeconds(int timeParam, bool rising) {
     int t = juce::jlimit(0, 99, timeParam) * 165;
     if (t > 0x3FFF) t = 0x3FFF;
-    const int rate = (rising ? m1rom::kEgRise : m1rom::kEgFall)[t >> 6];
+    const auto R = currentRom();
+    if (!R) return 0.0;
+    const int rate = (rising ? R->egRise : R->egFall)[(size_t)(t >> 6)];
     return 65536.0 / (double)(rate < 1 ? 1 : rate) * (double)m1::kUpdate / (double)m1::kSampleRate;
 }
 
 // The engine's VDF (m1_engine.cpp, vdf()): two chips, each a plain one-pole stage (k) and a
 // bilinear stage (pole a, gain (1 - a) / 2), run at twice the output rate.
 std::vector<float> M1AudioProcessor::vdfResponseDb(int cutoffParam, const std::vector<float>& freqsHz) {
+    const auto R = currentRom();
+    if (!R) return std::vector<float>(freqsHz.size(), 0.0f);
     int c = (juce::jlimit(0, 99, cutoffParam) * 0x52BF) >> 8;
     c = juce::jlimit(0, 0x1FFF, c);
     const int i2 = c >> 1, i1 = juce::jmin(c, 0x1FD2) >> 1;
-    const double k1 = m1rom::kVdf1k[i1] / 8192.0, k2 = m1rom::kVdf2k[i2] / 8192.0;
-    const double a1 = -m1rom::kVdf1t0[i1] / 8192.0, a2 = -m1rom::kVdf2t0[i2] / 8192.0;
+    const double k1 = R->vdf1k[(size_t)i1] / 8192.0, k2 = R->vdf2k[(size_t)i2] / 8192.0;
+    const double a1 = -R->vdf1t0[(size_t)i1] / 8192.0, a2 = -R->vdf2t0[(size_t)i2] / 8192.0;
     const double g1 = (1.0 - a1) * 0.5, g2 = (1.0 - a2) * 0.5;
     const double fs = 2.0 * m1::kSampleRate;
     std::vector<float> out;
@@ -299,15 +354,15 @@ std::vector<float> M1AudioProcessor::vdfResponseDb(int cutoffParam, const std::v
 int M1AudioProcessor::multisoundWave(int ms, int key, int columns, std::vector<float>& mins, std::vector<float>& maxs, int& zones) const {
     zones = 0;
     if (!ready || ms < 0 || ms > 99 || columns < 1) return 0;
-    const m1::Multisound& m = m1rom::kMultisounds[ms];
+    const m1::Multisound& m = romData->ms[(size_t)ms];
     zones = m.count;
     int zone = 0;
     for (int k = 0; k < m.count; ++k) {
         zone = k;
-        if (key <= m1rom::kSplits[m.first + k].top) break;
+        if (key <= romData->splits[(size_t)(m.first + k)].top) break;
     }
-    const m1::Split& sp = m1rom::kSplits[m.first + zone];
-    if (sp.end <= sp.start || sp.end > pcm.size()) return 0;
+    const m1::Split& sp = romData->splits[(size_t)(m.first + zone)];
+    if (sp.end <= sp.start || sp.end > romData->pcm.size()) return 0;
     const uint32_t n = sp.end - sp.start;
     mins.assign((size_t)columns, 0.0f);
     maxs.assign((size_t)columns, 0.0f);
@@ -317,7 +372,7 @@ int M1AudioProcessor::multisoundWave(int ms, int key, int columns, std::vector<f
         if (b <= a) b = a + 1;
         int lo = 32767, hi = -32768;
         const uint32_t step = juce::jmax<uint32_t>(1, (b - a) / 64);   // enough samples per column
-        for (uint32_t i = a; i < b && i < sp.end; i += step) { lo = std::min<int>(lo, pcm[i]); hi = std::max<int>(hi, pcm[i]); }
+        for (uint32_t i = a; i < b && i < sp.end; i += step) { lo = std::min<int>(lo, romData->pcm[i]); hi = std::max<int>(hi, romData->pcm[i]); }
         mins[(size_t)x] = (float)lo / 32768.0f;
         maxs[(size_t)x] = (float)hi / 32768.0f;
     }
@@ -326,8 +381,8 @@ int M1AudioProcessor::multisoundWave(int ms, int key, int columns, std::vector<f
 
 juce::String M1AudioProcessor::nameAt(bool combi, int i) const {
     if (i < 0 || i > 99) return {};
-    const uint8_t* p = combi ? m1rom::kCombis + 124 * i : m1rom::kPrograms + 143 * i;
-    if (ready) p = combi ? mem.image().combis + 124 * i : mem.image().programs + 143 * i;
+    if (!ready) return {};
+    const uint8_t* p = combi ? mem.image().combis + 124 * i : mem.image().programs + 143 * i;
     char buf[11];
     std::memcpy(buf, p, 10);
     buf[10] = 0;
