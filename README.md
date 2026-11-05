@@ -1,4 +1,4 @@
-# Me-1
+# Me-1-synth
 
 The Korg M1 engine, extracted from Michi71's PicoVintageSynthCollection
 (instrument PicoFaceM1, release v1.22.0, 2026-11-05), the same way the D-50

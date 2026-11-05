@@ -1,4 +1,4 @@
-# Me-1 - notes for Claude
+# Me-1-synth - notes for Claude
 
 Korg M1 engine extracted from `forks/PicoVintageSynthCollection`
 (`instruments/PicoFaceM1`, `tools/m1_extract`), same approach as `d50/` in
